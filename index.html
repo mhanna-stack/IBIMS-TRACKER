@@ -2231,6 +2231,9 @@ function buildTable(host,rows){
   if(!rows.length){host.append(h("div",{class:"empty"},h("p",{text:"No tasks match these filters."})));return;}
   var flashing=flashId&&Date.now()-flashAt<4000;
   var sorted=rows.slice().sort(taskOrder);
+  /* show the first rows only; hundreds of rows with their controls made the page slow to open and scroll */
+  var fkey=JSON.stringify(S.f);if(fkey!==tblKey){tblKey=fkey;tblLimit=TBL_PAGE;}
+  var moreRows=Math.max(0,sorted.length-tblLimit);if(moreRows>0)sorted=sorted.slice(0,tblLimit);
   host.append(todayStrip(rows));
   if(rows.some(function(t){return roundsOf(t).length;}))host.append(h("div",{"class":"rows-all"},h("span",{"class":"rv-hint",text:"Comment rows:"}),
     h("button",{"class":"btn small quiet",type:"button",onclick:function(){setAllRows(rows,true);}},"▾ Expand all"),h("button",{"class":"btn small quiet",type:"button",onclick:function(){setAllRows(rows,false);}},"▸ Collapse all")));
@@ -2264,7 +2267,11 @@ function buildTable(host,rows){
   });
   host.append(h("div",{class:"tablewrap"},h("table",null,
     h("thead",null,h("tr",null,head.map(function(c){return Array.isArray(c)?h("th",{class:c[1],text:c[0]}):h("th",{text:c});}))),tb)));
+  if(moreRows>0)host.append(h("div",{"class":"rows-all"},h("span",{"class":"rv-hint",text:"Showing "+sorted.length+" of "+(sorted.length+moreRows)+" tasks."}),
+    h("button",{"class":"btn small",type:"button",onclick:function(){tblLimit+=TBL_PAGE;render();}},"Show "+Math.min(TBL_PAGE,moreRows)+" more"),
+    h("button",{"class":"btn small quiet",type:"button",onclick:function(){tblLimit=1e9;render();}},"Show all")));
 }
+var TBL_PAGE=100,tblLimit=TBL_PAGE,tblKey="";
 
 /* ---------- dashboard ---------- */
 var STACK=[["In Progress","prog"],["Completed","done"],["Comment","cmt"],["Next Day","nxt"],["On Hold","hold"],["Not Started","todo"],["Delayed","late"]];
@@ -2888,12 +2895,20 @@ function personName(email){for(var i=0;i<directory.length;i++)if(directory[i].em
 function sendCell(t){
   var note=t.sent_to?h("span",{"class":"sub",text:"Sent "+(t.sent_at?niceStamp(t.sent_at):"")}):null;
   if(!canEdit(t))return [t.sent_to?personName(t.sent_to):"—",note];
-  var sel=h("select",{"class":"cell-send","aria-label":"Send "+(t.task||"task")+" to"});
+  var sel=h("select",{"class":"cell-send","aria-label":"Send "+(t.task||"task")+" to"}),filled=false;
+  /* the full people list is added only when the cell is opened: hundreds of rows with a long list each made the page heavy */
+  function fill(){
+    if(filled)return;filled=true;var cur=sel.value;clear(sel);
+    sel.append(h("option",{value:"",text:"Choose who"}));
+    byRole(directory.filter(function(u){return !(me&&u.email===me.email);}),function(u){return u.role;}).forEach(function(g){
+      var og=h("optgroup",{label:rolePlural(g.role)||"Other"});
+      g.items.forEach(function(u){og.append(h("option",{value:u.email,text:u.name||u.email}));});sel.append(og);});
+    if(t.sent_to&&!directory.some(function(u){return u.email===t.sent_to;}))sel.append(h("option",{value:t.sent_to,text:t.sent_to}));
+    sel.value=cur;
+  }
   sel.append(h("option",{value:"",text:"Choose who"}));
-  byRole(directory.filter(function(u){return !(me&&u.email===me.email);}),function(u){return u.role;}).forEach(function(g){
-    var og=h("optgroup",{label:rolePlural(g.role)||"Other"});
-    g.items.forEach(function(u){og.append(h("option",{value:u.email,text:u.name||u.email}));});sel.append(og);});
-  if(t.sent_to&&!directory.some(function(u){return u.email===t.sent_to;}))sel.append(h("option",{value:t.sent_to,text:t.sent_to}));
+  if(t.sent_to)sel.append(h("option",{value:t.sent_to,text:personName(t.sent_to)}));
+  ["focus","mousedown","touchstart","keydown"].forEach(function(ev){sel.addEventListener(ev,fill);});
   sel.value=t.sent_to||"";
   sel.addEventListener("change",function(){
     var to=sel.value;if(!to||to===t.sent_to){sel.value=t.sent_to||"";return;}
