@@ -809,6 +809,7 @@ table.mg-cg td,table.mg-cg th{padding-top:7px;padding-bottom:7px}.mg-cg .mg-cg-w
 .mg-chead{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;justify-content:space-between}.mg-chead .mg-ctools{margin:0}
 .mg-cwho{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--accent)}
 .u-two{display:grid;gap:4px}.u-tk{display:grid;gap:2px}.u-tk small{color:var(--muted);font-size:11px}
+.u-name{display:block;margin-top:4px;width:100%;max-width:260px;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line,#d0d5dd);border-radius:6px;background:transparent;color:inherit}
 .fc-host{position:fixed;right:18px;bottom:18px;z-index:9000;display:flex;flex-direction:column-reverse;gap:10px;width:min(400px,calc(100vw - 24px));pointer-events:none}
 .fc{position:relative;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;padding:14px 14px 16px;border-radius:14px;background:var(--surface);color:var(--ink);
   border:1px solid color-mix(in srgb,var(--fk) 45%,var(--line));border-left:6px solid var(--fk);box-shadow:0 14px 40px rgba(10,25,40,.28),0 0 0 4px color-mix(in srgb,var(--fk) 14%,transparent);
@@ -1972,6 +1973,18 @@ dialog.wide{width:min(980px,calc(100vw - 32px))}
   <div class="dlg-f"><button class="btn primary" id="btnUsersClose" type="button">Done</button></div>
 </dialog>
 
+<dialog id="engEditDlg" aria-labelledby="engEditTitle">
+  <div class="dlg-h"><h3 id="engEditTitle">Edit engineer</h3></div>
+  <form class="team-b" id="engEditForm" novalidate>
+    <label class="field"><span>Name</span><input type="text" id="eeName" maxlength="60" autocomplete="off"></label>
+    <label class="field"><span>Discipline</span><select id="eeDisc"></select></label>
+    <label class="exp-opt"><input type="checkbox" id="eeMove" checked><span><strong>Move their existing tasks too</strong><small>Untick to keep old tasks under the old discipline</small></span></label>
+    <p class="hint">A new name is applied everywhere: tasks, time log, attendance and the linked login.</p>
+    <p class="err" id="eeErr" role="alert"></p>
+  </form>
+  <div class="dlg-f"><button class="btn left" id="eeCancel" type="button">Cancel</button><button class="btn primary" id="eeSave" type="button">Save</button></div>
+</dialog>
+
 <dialog id="exportDlg" aria-labelledby="exportTitle">
   <div class="dlg-h"><h3 id="exportTitle">Export</h3></div>
   <div class="team-b">
@@ -2590,7 +2603,7 @@ function loadTasks(){
   }
   return page(0).catch(function(e){if(taskKindCol&&/kind/i.test(String(e&&e.message))){taskKindCol=false;out=[];return page(0);}throw e;}).then(function(all){S.tasks=all.map(row2task);S.tasksLoaded=true;});
 }
-function loadAll(){return Promise.all([loadTasks(),loadSettings(),loadRounds(),loadDirectory(),loadNotifs(),loadTime(),loadComments()]).then(function(){S.conn="live";render();if($("teamDlg").open)renderTeam();});}
+function loadAll(){return Promise.all([loadTasks(),loadSettings(),loadRounds(),loadDirectory(),loadNotifs(),loadTime(),loadComments()]).then(function(){S.conn="live";applyDirScope();render();if($("teamDlg").open)renderTeam();});}
 /* full reload: every 5 minutes while live updates work (90 s when they do not), never while the tab is hidden */
 var lastFull=0,liveOk=false;
 function refresh(force){if(!sb||!me)return;if(!force&&document.hidden)return;
@@ -2896,7 +2909,16 @@ function roundDone(r,btn){
 
 /* ---------- send to + notifications ---------- */
 var directory=[],notifs=[];
-function loadDirectory(){return run(sb.rpc("tt_directory")).then(function(d){directory=(d||[]).map(function(u){return {email:String(u.email),name:String(u.full_name||""),role:String(u.role||""),engineer:String(u.engineer||""),discipline:String(u.discipline||""),also:String(u.also||"").split(",").filter(Boolean)};});});}
+function loadDirectory(){return run(sb.rpc("tt_directory")).then(function(d){dirRaw=(d||[]).map(function(u){return {email:String(u.email),name:String(u.full_name||""),role:String(u.role||""),engineer:String(u.engineer||""),discipline:String(u.discipline||""),also:String(u.also||"").split(",").filter(Boolean)};});applyDirScope();});}
+var dirRaw=[];
+/* engineers of another discipline are not listed for people who do not see every discipline */
+function applyDirScope(){
+  if(!me||editAll()){directory=dirRaw;return;}
+  var mine=null;dirRaw.forEach(function(u){if(u.email===me.email)mine=u;});
+  var md=isLeadRole(me.role)?(me.discipline?[me.discipline]:[]):mine?[mine.discipline].concat(mine.also||[]).filter(Boolean):[];
+  directory=dirRaw.filter(function(u){if(u.role!=="engineer"||u.email===me.email)return true;if(!md.length)return false;
+    return [u.discipline].concat(u.also||[]).some(function(d){return d&&md.indexOf(d)>=0;});});
+}
 function personName(email){for(var i=0;i<directory.length;i++)if(directory[i].email===email)return directory[i].name||email;return email;}
 function sendCell(t){
   var note=t.sent_to?h("span",{"class":"sub",text:"Sent "+(t.sent_at?niceStamp(t.sent_at):"")}):null;
@@ -3490,6 +3512,7 @@ function renderTeam(){
       h("div",{class:"chips"},list.length?list.map(function(e){var sec=e.discipline!==d.k,multi=discsOf(e).length>1;
         return h("span",{class:"chip"+(e.female?" fem":"")+(multi?" multi":""),title:multi?"Works in "+discLabel(discsOf(e)):null},e.name,
         multi?h("small",{"class":"chip-also",text:sec?"also":discsOf(e).length>=4?"all":"+"+(discsOf(e).length-1)}):null,
+        h("button",{type:"button","class":"sex",title:"Edit name or discipline","aria-label":"Edit "+e.name,onclick:function(){openEngEdit(e);}},"✎"),
         h("button",{type:"button","class":"sex",title:e.female?"Female: wins Star of the day. Click to set as male":"Male: wins Man of the day. Click to set as female",
           "aria-label":(e.female?"Set "+e.name+" as male":"Set "+e.name+" as female"),onclick:function(){
           teamOp(sb.from("tt_engineers").update({female:!e.female}).eq("name",e.name));}},e.female?"♀":"♂"),
@@ -3499,6 +3522,20 @@ function renderTeam(){
           teamOp(sb.from("tt_engineers").update({discipline:rest[0],also:rest.slice(1)}).eq("name",e.name));}},"×"));})
         :h("span",{class:"hint",text:"No engineers yet."}),addSel)));
   });
+}
+var eeOld=null;
+function openEngEdit(e){
+  eeOld=e;$("eeName").value=e.name;discOptions($("eeDisc"),e.discipline);$("eeMove").checked=true;$("eeErr").textContent="";$("engEditDlg").showModal();
+}
+function saveEngEdit(){
+  if(!eeOld||busy)return;var n=$("eeName").value.trim(),d=$("eeDisc").value;
+  if(!n){$("eeErr").textContent="Enter a name.";return;}if(!d){$("eeErr").textContent="Pick a discipline.";return;}
+  if(n===eeOld.name&&d===eeOld.discipline){$("engEditDlg").close();return;}
+  busy=true;$("eeSave").disabled=true;$("eeErr").textContent="";
+  run(sb.rpc("tt_edit_engineer",{p_old:eeOld.name,p_new:n,p_disc:d,p_move:$("eeMove").checked})).then(function(){
+    $("engEditDlg").close();toast("Saved "+n+".");return loadAll();}).then(function(){renderTeam();if($("usersDlg").open)loadUsers().then(renderUsers);})
+  .catch(function(e){$("eeErr").textContent=/tt_edit_engineer/.test(String(e&&e.message))&&/function|schema cache/i.test(String(e&&e.message))?"Run supabase-update.sql (version 49) first.":writeError(e).replace(/^Could not save:\s*/,"");})
+  .then(function(){busy=false;$("eeSave").disabled=false;});
 }
 function teamOp(q){
   if(busy||!sb)return;
@@ -3609,6 +3646,8 @@ function renderUsers(){
       tsel.addEventListener("change",function(){userUpdate(u,{engineer:tsel.value||null});});
       eng=h("div",{"class":"u-two"},dsel,h("label",{"class":"u-tk"},h("small",{text:"Takes tasks as"}),tsel));}
     else eng=h("span",{class:"hint",text:"Takes no tasks"});
+    var nameIn=h("input",{type:"text",value:u.full_name||"",maxlength:"80","aria-label":"Full name of "+u.email,placeholder:"Full name","class":"u-name"});
+    nameIn.addEventListener("change",function(){var v=nameIn.value.trim();if(!v){nameIn.value=u.full_name||"";return;}if(v!==(u.full_name||""))userUpdate(u,{full_name:v});});
     var act=h("input",{type:"checkbox","aria-label":"Active: "+u.email,disabled:self});act.checked=!!u.active;
     act.addEventListener("change",function(){userUpdate(u,{active:act.checked});});
     var pw=h("input",{type:"text",placeholder:"New password",autocomplete:"off",maxlength:"72","aria-label":"New password for "+u.email,hidden:true});
@@ -3619,7 +3658,7 @@ function renderUsers(){
     var del=h("button",{class:"btn small danger",type:"button"},"Delete"),armed=false;
     del.addEventListener("click",function(){if(!armed){armed=true;del.textContent="Click again to delete";return;}userDelete(u);});
     tb.append(h("tr",null,
-      h("td",null,h("strong",{text:u.email}),h("span",{class:"sub",text:(u.full_name||"")+(self?(u.full_name?" · ":"")+"you":"")})),
+      h("td",null,h("strong",{text:u.email}),nameIn,self?h("span",{class:"sub",text:"you"}):null),
       h("td",null,role),h("td",null,eng),h("td",null,act),
       h("td",null,h("div",{class:"uact"},pw,pwBtn,self?null:del))));
   });
@@ -3668,7 +3707,7 @@ function leave(){
   TEAM=[];teamLoaded=false;
   PJ.info={};PJ.ms=[];PJ.team=[];PJ.loaded=false;PJ.sel="";
   stopPR();attReady=false;myPerms={};allUserPerms=[];dlv=[];dlvLinks=[];dlvLoaded=false;dlvSel={};dlvSrc=[];mgKpi=[];mgKpiState="";fbRows=[];fbLoaded=false;paintFbBadge();chatPeople={};chatTaskCnt={};chatMsgs={};chatPeer="";paintChatBadge();stopTidpSync();stopBc();kpiRows=[];kpiAuto={};stopReminders();stopMotd();stopTick();stopReview();stopLive();attRows=[];attMine=null;S.time=[];S.timeBy={};stopAlarm(true);try{if($("pingDlg").open)$("pingDlg").close();}catch(e){}sentPings=[];
-  stopPresence();me=null;users=[];notifs=[];directory=[];paintNotifs();knownPending=null;document.title=baseTitle;unsubscribe();S.rounds=[];S.roundsBy={};S.tasks=[];S.tasksLoaded=false;S.settingsLoaded=false;S.conn="wait";
+  stopPresence();me=null;users=[];notifs=[];directory=[];dirRaw=[];paintNotifs();knownPending=null;document.title=baseTitle;unsubscribe();S.rounds=[];S.roundsBy={};S.tasks=[];S.tasksLoaded=false;S.settingsLoaded=false;S.conn="wait";
   ["taskDlg","teamDlg","usersDlg","acctDlg","onlineDlg","exportDlg","notifDlg","bcDlg","kpiDlg","kpiCfgDlg","kpiSumDlg","permDlg","dlvImpDlg","dlvDelDlg","dlvLinkDlg","mgDlg","fbDlg","chatDlg"].forEach(function(id){if($(id).open)$(id).close();});
   $("loginErr").textContent="";showAuth("login");
 }
@@ -3756,6 +3795,7 @@ function wire(){
   $("btnSignOut").addEventListener("click",function(){$("acctDlg").close();sb.auth.signOut().then(leave,leave);});
   $("btnUsers").addEventListener("click",openUsers);
   $("btnUsersClose").addEventListener("click",function(){$("usersDlg").close();});
+  $("eeCancel").addEventListener("click",function(){$("engEditDlg").close();});$("eeSave").addEventListener("click",saveEngEdit);$("engEditForm").addEventListener("submit",function(ev){ev.preventDefault();saveEngEdit();});
   $("userForm").addEventListener("submit",addUser);
   $("uRole").addEventListener("change",syncUserForm);
   $("btnOnline").addEventListener("click",function(){renderOnline();$("onlineDlg").showModal();});
