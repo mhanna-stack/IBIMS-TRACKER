@@ -809,6 +809,7 @@ table.mg-cg td,table.mg-cg th{padding-top:7px;padding-bottom:7px}.mg-cg .mg-cg-w
 .mg-chead{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;justify-content:space-between}.mg-chead .mg-ctools{margin:0}
 .mg-cwho{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--accent)}
 .u-two{display:grid;gap:4px}.u-tk{display:grid;gap:2px}.u-tk small{color:var(--muted);font-size:11px}
+.tm-opt{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:rgba(214,158,46,.18);color:#8a5a00;align-self:center}.tm-opt.none{background:rgba(120,120,120,.18);color:var(--muted)}.tm-scope{margin-left:auto;font:inherit;font-size:12px;padding:3px 6px;border-radius:6px}
 .u-name{display:block;margin-top:4px;width:100%;max-width:260px;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line,#d0d5dd);border-radius:6px;background:transparent;color:inherit}
 .fc-host{position:fixed;right:18px;bottom:18px;z-index:9000;display:flex;flex-direction:column-reverse;gap:10px;width:min(400px,calc(100vw - 24px));pointer-events:none}
 .fc{position:relative;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;padding:14px 14px 16px;border-radius:14px;background:var(--surface);color:var(--ink);
@@ -2643,6 +2644,7 @@ function subscribe(){
       .on("postgres_changes",{event:"*",schema:"public",table:"tt_deliv_tasks"},function(){dlvLater();})
       .on("postgres_changes",{event:"*",schema:"public",table:"tt_tidp_sources"},function(){dlvLater();})
       .on("postgres_changes",{event:"*",schema:"public",table:"tt_team"},function(){teamLater();})
+      .on("postgres_changes",{event:"*",schema:"public",table:"tt_proj_scope"},function(){teamLater();})
       .on("postgres_changes",{event:"*",schema:"public",table:"tt_proj_info"},function(){pjLater();})
       .on("postgres_changes",{event:"*",schema:"public",table:"tt_proj_milestones"},function(){pjLater();})
       .on("postgres_changes",{event:"*",schema:"public",table:"tt_proj_team"},function(){pjLater();})
@@ -5464,7 +5466,7 @@ function kpiTodo(u,r){return KPI_PARTS.filter(function(p){return kpiCan(p[0],u.e
 function kpiSeg(key,opts){var g=h("div",{"class":"seg kpi-seg",role:"group","aria-label":key});
   opts.forEach(function(o){g.append(h("button",{type:"button","aria-pressed":String(kpiF[key]===o[0]),onclick:function(){kpiF[key]=o[0];saveKpiF();if(key==="mode"||key==="range")loadKpi();else renderKpi();}},o[1]));});return g;}
 function renderKpiTeam(host,st){
-  var w=kpiW();$("kpiSub").textContent=peerRater()?kpiMonthName(kpiMonth())+" · your private evaluations of the engineers of your discipline · each item from 1 to 5":kpiMonthName(kpiMonth())+" · HR "+w.hr+"% · Direct manager "+w.mgr+"% · Top / PM "+w.top+"% · each item from 1 to 5";
+  var w=kpiW();$("kpiSub").textContent=peerRater()?kpiMonthName(kpiMonth())+" · your private evaluations of the engineers (and Engineer A, if you are senior to them) of your discipline · each item from 1 to 5":kpiMonthName(kpiMonth())+" · HR "+w.hr+"% · Direct manager "+w.mgr+"% · Top / PM "+w.top+"% · each item from 1 to 5";
   var all=kpiPeople().map(function(u){var r=kpiOf(u.email),f=kpiFinal(r),st=kpiStatus(r,f),todo=kpiTodo(u,r);
     var peer=false;
     if(kpiPeerCan(u.email)){peer=true;var own=peerList(u.email,me.email),av=peerAvg(own);r=null;f={score:av,complete:av!==null,n:own.filter(function(x){return x.done;}).length};st=own.length?(av!==null?"complete":"progress"):"none";todo=av!==null?0:1;}
@@ -5669,7 +5671,7 @@ function renderKpiForm0(){
     else if(saved&&saved.note)card.append(h("p",{"class":"kpi-noteview",text:saved.note}));
     host.append(card);
   });
-  if(u&&u.role==="engineer"&&kpiEvaluator()&&!peerRater())host.append(peerBox(email,month));
+  if(u&&(u.role==="engineer"||u.role==="engineera")&&kpiEvaluator()&&!peerRater())host.append(peerBox(email,month));
   var kdb=$("kpiDelForm");kdb.hidden=!r||!(isAdmin()||kpiCanRelease());kdb.onclick=function(){clearKpi(r,"all","",kdb);};
   var rb=$("kpiRelease");rb.hidden=!kpiCanRelease()||!r||(u&&u.role==="engineer");
   if(r){rb.textContent=released?"Take it back from "+((u&&u.name)||r.name):"Send to "+((u&&u.name)||r.name);rb.disabled=!released&&!f.complete;rb.title=!released&&!f.complete?"All three parts have to be submitted first":"";}
@@ -5983,11 +5985,11 @@ function canDecide(q){if(!me||q.email===me.email)return false;if(isAdmin())retur
 /* Each lead of a discipline evaluates its engineers privately; the engineer's "direct manager" part is the average, so nobody types it */
 function peerRater(){return !!me&&isLeadRole(me.role)&&can("kpi_mgr")&&!editAll();}
 function kpiPeerCan(email){if(!peerRater()||email===me.email)return false;var u=null;directory.forEach(function(x){if(x.email===email)u=x;});
-  return !!u&&u.role==="engineer"&&personDiscs(email).some(function(d){return myDiscs().indexOf(d)>=0;});}
+  return !!u&&(u.role==="engineer"||(u.role==="engineera"&&rankOf(me.role)>rankOf("engineera")))&&personDiscs(email).some(function(d){return myDiscs().indexOf(d)>=0;});}
 function peerList(email,rater){return kpiPeer.filter(function(x){return x.email===email&&x.month===kpiMonth()&&(!rater||x.rater===rater);}).sort(function(a,b){return a.at<b.at?-1:1;});}
 function peerAvg(rows){var s=0,n=0;rows.forEach(function(x){if(!x.done)return;var v=kpiPartScore(x);if(v!==null){s+=v;n++;}});return n?s/n:null;}
 function kpiCan(part,email){if(!me||email===me.email)return false;var u=null;directory.forEach(function(x){if(x.email===email)u=x;});if(!kpiTarget(u))return false;
-  if(part==="mgr"&&u.role==="engineer")return false;
+  if(part==="mgr"&&(u.role==="engineer"||u.role==="engineera"))return false;
   if(isAdmin())return true;if(part==="hr")return can("kpi_hr");if(part==="top")return can("kpi_top");
   if(!can("kpi_mgr"))return false;if(can("view_all"))return true;return personDiscs(email).some(function(d){return myDiscs().indexOf(d)>=0;})&&rankOf(me.role)>rankOf(u.role);}
 function kpiCanRelease(){return can("kpi_send");}
@@ -7367,9 +7369,10 @@ function forMe(){
    .then(function(){b.disabled=false;});
 }
 /* ---------- teams: project > discipline > senior > juniors (version 47) ---------- */
-var TEAM=[],teamLoaded=false,tmBusy=false,tmSoon=null,hrOnly=null,tmOpt={};
+var SCOPE={},TEAM=[],teamLoaded=false,tmBusy=false,tmSoon=null,hrOnly=null,tmOpt={};
+function scopeOf(p,d){return SCOPE[p+"|"+d]||"required";}
 function loadTeam(){if(!sb||!me)return Promise.resolve();
-  return run(sb.from("tt_team").select("*")).then(function(d){TEAM=(d||[]).map(function(o){return {project:String(o.project),discipline:String(o.discipline),kind:String(o.kind),member:String(o.member),hours:(o.hours===null||o.hours===undefined)?null:num(o.hours)};});teamLoaded=true;render();},function(){teamLoaded=true;});}
+  return Promise.all([run(sb.from("tt_team").select("*")),run(sb.from("tt_proj_scope").select("project,discipline,scope")).catch(function(){return [];})]).then(function(rr){var d=rr[0];SCOPE={};(rr[1]||[]).forEach(function(o){SCOPE[String(o.project)+"|"+String(o.discipline)]=String(o.scope);});TEAM=(d||[]).map(function(o){return {project:String(o.project),discipline:String(o.discipline),kind:String(o.kind),member:String(o.member),hours:(o.hours===null||o.hours===undefined)?null:num(o.hours)};});teamLoaded=true;render();},function(){teamLoaded=true;});}
 function teamLater(){if(tmSoon)clearTimeout(tmSoon);tmSoon=setTimeout(function(){tmSoon=null;if(!tmBusy)loadTeam();},800);}
 function teamSenior(p,d){var r=null;TEAM.forEach(function(x){if(x.project===p&&x.discipline===d&&x.kind==="senior")r=x;});return r;}
 function teamJuniors(p,d){return TEAM.filter(function(x){return x.project===p&&x.discipline===d&&x.kind==="junior";});}
@@ -7405,12 +7408,23 @@ function tmBlock(p,d,rowsIn,opts){
   var rows=rowsIn||S.tasks.filter(function(t){return t.project===p&&t.discipline===d;}),sr=teamSenior(p,d),jr=teamJuniors(p,d),blk=h("section",{"class":"tm-blk"}),m=tmSum(rows);
   var head=h("div",{"class":"tm-head"},h("h4",{text:titleCase(d)}),canHoursReport()?h("button",{"class":"btn small",type:"button",onclick:function(){
     var names=jr.map(function(x){return x.member;});if(sr&&seniorEng(sr))names.push(seniorEng(sr));openHours(today(),names,p+" · "+titleCase(d));}},"Daily report"):null);
+  var sc=scopeOf(p,d);
+  if(sc==="optional")head.insertBefore(h("span",{"class":"tm-opt",title:"Not every project needs this section",text:"Optional"}),head.children[1]||null);
+  if(sc==="none")head.insertBefore(h("span",{"class":"tm-opt none",text:"No scope"}),head.children[1]||null);
+  if(canProjEdit()&&!tmOpt.ro){var ss=h("select",{"class":"tm-scope","aria-label":"Scope of "+titleCase(d)+" in "+p,title:"Scope of this section in the project"});
+    [["required","In scope"],["optional","Optional"],["none","No scope"]].forEach(function(o){ss.append(h("option",{value:o[0],text:o[1]}));});ss.value=sc;
+    ss.addEventListener("change",function(){var v=ss.value;if(v==="none"&&(teamSenior(p,d)||teamJuniors(p,d).length)&&!confirm("Remove "+titleCase(d)+" from "+p+"? Its senior and team stay saved if you bring the section back."))
+      {ss.value=sc;return;}
+      tmRun(v==="required"?sb.from("tt_proj_scope").delete().eq("project",p).eq("discipline",d):sb.from("tt_proj_scope").upsert({project:p,discipline:d,scope:v,updated_by:me.email},{onConflict:"project,discipline"}),
+        v==="none"?titleCase(d)+" removed from "+p:v==="optional"?titleCase(d)+" is optional in "+p:titleCase(d)+" is in scope in "+p).then(function(){if(S.view==="proj")renderProj();});});
+    head.append(ss);}
+  if(sc==="none"&&!rows.length){blk.append(head,h("p",{"class":"hint",text:"No scope in this project. Choose In scope or Optional to bring it back."}));tmOpt={};return blk;}
   blk.append(head,tmChips(m));
   /* senior */
   var srRow=h("div",{"class":"tm-row"},h("span",{"class":"tm-lab",text:"Senior"}));
   if(sr){var en=seniorEng(sr);srRow.append(tmMemberCard(p,d,en||seniorName(sr),false,rows));
     if(!en)srRow.lastChild.firstChild.title="This senior has no engineer name yet, so he has no tasks of his own";}
-  else srRow.append(h("span",{"class":"rv-hint",text:"No senior set yet"}));
+  else srRow.append(h("span",{"class":"rv-hint",text:sc==="optional"?"No senior set (optional section)":"No senior set yet"}));
   if(canProjEdit()&&!tmOpt.ro){var cand=directory.filter(function(u){return isLeadRole(u.role)&&(u.discipline===d||personDiscs(u.email).indexOf(d)>=0);});
     var sel=h("select",{"aria-label":"Senior of "+titleCase(d)+" in "+p},h("option",{value:"",text:sr?"Change senior…":"Set senior…"}));
     cand.forEach(function(u){sel.append(h("option",{value:u.email,text:(u.name||u.engineer||u.email)+" · "+roleName(u.role)}));});if(sr)sel.append(h("option",{value:"__none",text:"— no senior —"}));
@@ -7440,12 +7454,12 @@ function renderTeamPanel(){
     var grid=h("div",{"class":"tm-pgrid"});
     projs.forEach(function(p){var rows=S.tasks.filter(function(t){return t.project===p;}),m=tmSum(rows),card=h("button",{"class":"tm-pcard",type:"button",onclick:function(){setFilter("project",p);}},h("b",{text:p}),
         h("small",null,h("strong",{text:m.n+" tasks"}),m.n?" · "+pctTxt(m.prog)+" · "+h1(Math.round(m.act*10)/10)+" / "+h1(Math.round(m.est*10)/10)+" h":""));
-      DISC.forEach(function(dd){var sr=teamSenior(p,dd.k),n=teamJuniors(p,dd.k).length,tn=rows.filter(function(t){return t.discipline===dd.k;}).length;if(!sr&&!n&&!tn)return;
+      DISC.forEach(function(dd){var sr=teamSenior(p,dd.k),n=teamJuniors(p,dd.k).length,tn=rows.filter(function(t){return t.discipline===dd.k;}).length;if(!sr&&!n&&!tn)return;if(scopeOf(p,dd.k)==="none"&&!tn)return;
         card.append(h("small",null,h("strong",{text:titleCase(dd.k)}),sr?" · "+seniorName(sr):"",n?" · "+n+(n===1?" engineer":" engineers"):"",tn?" · "+tn+" tasks":""));});
       grid.append(card);});
     host.append(grid);return;}
   host.append(h("div",{"class":"tm-head"},h("h3",{text:proj}),h("button",{"class":"btn small",type:"button",onclick:function(){setFilter("project","");}},"‹ All projects")));
-  var ds=disc?[disc]:DISC.map(function(x){return x.k;}).filter(function(d){return canProjEdit()||teamSenior(proj,d)||teamJuniors(proj,d).length||S.tasks.some(function(t){return t.project===proj&&t.discipline===d;});});
+  var ds=disc?[disc]:DISC.map(function(x){return x.k;}).filter(function(d){var tk=S.tasks.some(function(t){return t.project===proj&&t.discipline===d;});if(scopeOf(proj,d)==="none"&&!tk)return false;return canProjEdit()||teamSenior(proj,d)||teamJuniors(proj,d).length||tk;});
   if(!ds.length)host.append(h("p",{"class":"hint",text:"No sections yet in this project."}));
   ds.forEach(function(d){host.append(tmBlock(proj,d));});
 }
@@ -7519,7 +7533,7 @@ function renderProj(){
   host.append(h("section",{"class":"panel"},h("h3",{text:"Milestones / phases"}),
     h("div",{"class":"tablewrap"},h("table",{"class":"plain"},h("thead",null,h("tr",null,h("th",{text:"Milestone"}),h("th",{text:"Due"}),h("th",{text:"Status"}),h("th",{text:"Note"}),ed?h("th"):null)),tb)),ed?add:null));
   /* sections & teams: the same structure as the Tracker (project > section > senior > team) */
-  var secs=DISC.map(function(x){return x.k;}).filter(function(d){return ed||teamSenior(p,d)||teamJuniors(p,d).length||S.tasks.some(function(t){return t.project===p&&t.discipline===d;});});
+  var secs=DISC.map(function(x){return x.k;}).filter(function(d){var tk=S.tasks.some(function(t){return t.project===p&&t.discipline===d;});if(!ed&&scopeOf(p,d)==="none"&&!tk)return false;return ed||teamSenior(p,d)||teamJuniors(p,d).length||tk;});
   if(PJ.sec&&secs.indexOf(PJ.sec)<0)PJ.sec="";
   var tsec=h("section",{"class":"panel"},h("h3",{text:"Sections & teams"}),
     mgPick([["","All sections"]].concat(secs.map(function(d){return [d,titleCase(d)];})),PJ.sec,function(v){PJ.sec=v;renderProj();}));
