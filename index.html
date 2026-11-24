@@ -5398,12 +5398,12 @@ function sendReq(){
   ["rqDay","rqFrom","rqTo","rqD1","rqD2"].forEach(function(id){$(id).addEventListener("input",syncReq);$(id).addEventListener("change",syncReq);});})();
 
 /* ---------- monthly KPI: HR, direct manager, top management / project managers ---------- */
-var KPI_PARTS=[["hr","HR","HR fills this part"],["mgr","Direct manager","The lead above the person in their discipline fills this part"],["top","Top management / PM","Top management or a project manager fills this part"]];
+var KPI_PARTS=[["hr","HR","HR fills this part"],["mgr","Direct manager","The lead above the person fills this part. For an engineer it is the average of the leads of the discipline"],["top","Top management / PM","Top management or a project manager fills this part"]];
 var KPI_DEFAULT={hr:["Attendance and punctuality","Following company rules and policies","Professional behaviour","Teamwork and relations with colleagues","Response to HR requests and paperwork"],
   mgr:["Technical quality of the work","Productivity and meeting deadlines","Accuracy (few comments and little rework)","Initiative and problem solving","Communication and reporting to the lead","Learning and development"],
   top:["Contribution to project delivery","Quality of submissions to the client","Commitment and ownership","Working across disciplines","Overall potential"]};
 var KPI_SCALE=["","Poor","Below expectations","Meets expectations","Above expectations","Outstanding"];
-var kpiRows=[],kpiMonthV="",kpiOpenEmail="",kpiDraft={},kpiAuto={};
+var kpiRows=[],kpiPeer=[],kpiMonthV="",kpiOpenEmail="",kpiDraft={},kpiAuto={};
 function kpiCrit(){var c=null;try{c=JSON.parse((S.cfg||{}).kpi_criteria||"null");}catch(e){c=null;}c=c||{};
   var out={};KPI_PARTS.forEach(function(p){var l=Array.isArray(c[p[0]])?c[p[0]].map(String).filter(Boolean):[];out[p[0]]=l.length?l.slice(0,20):KPI_DEFAULT[p[0]].slice();});return out;}
 function kpiW(){var w=String((S.cfg||{}).kpi_weights||"20,50,30").split(",").map(num);if(w.length!==3||!(w[0]+w[1]+w[2]>0))w=[20,50,30];return {hr:w[0],mgr:w[1],top:w[2]};}
@@ -5424,7 +5424,10 @@ function loadKpi(){
   if(!sb||!me)return Promise.resolve();
   var q=sb.from("tt_kpi").select("*");
   if(kpiEvaluator()&&kpiF.mode!=="summary")q=q.eq("month",kpiMonth());else{var fm=kpiRangeFrom();if(fm)q=q.gte("month",fm);q=q.order("month",{ascending:false});}
-  return run(q.range(0,999)).then(function(d){kpiRows=(d||[]).map(row2kpi);if(S.view==="kpi")renderKpi();if($("kpiDlg").open)renderKpiForm();},function(){});
+  var pq=sb.from("tt_kpi_peer").select("email,month,rater,rater_name,scores,note,done,at").eq("month",kpiMonth()).range(0,999);
+  return Promise.all([run(q.range(0,999)),run(pq).catch(function(){return [];})]).then(function(r){kpiRows=(r[0]||[]).map(row2kpi);kpiPeer=(r[1]||[]).map(function(o){return {email:String(o.email),month:String(o.month),rater:String(o.rater),name:String(o.rater_name||o.rater),
+      scores:Array.isArray(o.scores)?o.scores:[],note:String(o.note||""),done:!!o.done,at:o.at?String(o.at):""};});
+    if(S.view==="kpi")renderKpi();if($("kpiDlg").open)renderKpiForm();},function(){});
 }
 function kpiPeople(){return directory.filter(function(u){if(!kpiTarget(u)||(me&&u.email===me.email))return false;if(editAll())return true;return kpiCan("mgr",u.email);})
   .sort(function(a,b){return (a.discipline||"").localeCompare(b.discipline||"")||(a.name||a.email).localeCompare(b.name||b.email);});}
@@ -5461,7 +5464,9 @@ function kpiSeg(key,opts){var g=h("div",{"class":"seg kpi-seg",role:"group","ari
   opts.forEach(function(o){g.append(h("button",{type:"button","aria-pressed":String(kpiF[key]===o[0]),onclick:function(){kpiF[key]=o[0];saveKpiF();if(key==="mode"||key==="range")loadKpi();else renderKpi();}},o[1]));});return g;}
 function renderKpiTeam(host,st){
   var w=kpiW();$("kpiSub").textContent=kpiMonthName(kpiMonth())+" · HR "+w.hr+"% · Direct manager "+w.mgr+"% · Top / PM "+w.top+"% · each item from 1 to 5";
-  var all=kpiPeople().map(function(u){var r=kpiOf(u.email),f=kpiFinal(r);return {u:u,r:r,f:f,st:kpiStatus(r,f),todo:kpiTodo(u,r),discs:personDiscs(u.email),main:(personDiscs(u.email)[0]||"")};});
+  var all=kpiPeople().map(function(u){var r=kpiOf(u.email),f=kpiFinal(r),st=kpiStatus(r,f),todo=kpiTodo(u,r);
+    if(kpiPeerCan(u.email)){var own=peerOf(u.email,me.email),sc=own&&own.done?kpiPartScore(own):null;r={mgr:own};f={score:sc,complete:sc!==null};st=own?(own.done?"complete":"progress"):"none";todo=own&&own.done?0:1;}
+    return {u:u,r:r,f:f,st:st,todo:todo,discs:personDiscs(u.email),main:(personDiscs(u.email)[0]||"")};});
   /* summary tiles over everyone this person can see */
   var c={n:all.length,done:0,sent:0,mine:0,avg:0,avgN:0};
   all.forEach(function(x){if(x.f.complete){c.done++;c.avg+=x.f.score;c.avgN++;}if(x.st==="sent")c.sent++;c.mine+=x.todo;});
@@ -5561,8 +5566,61 @@ function kpiAutoBox(part,a){
     if(part==="top"&&k.projects&&k.projects.length)it("Projects",k.projects.join(", "));}
   return box;
 }
+function renderPeerForm(u,email,month){
+  var crit=kpiCrit(),own=peerOf(email,me.email),labels=crit.mgr.slice();
+  var d=kpiDraft.peer||(kpiDraft.peer={scores:{},note:own?String(own.note||""):""});
+  if(own&&!d.init){own.scores.forEach(function(x){if(x&&x.score)d.scores[x.label]=+x.score;});d.init=true;}
+  if(own)own.scores.forEach(function(x){if(labels.indexOf(x.label)<0)labels.push(x.label);});
+  $("kpiTitle").textContent="KPI · "+kpiMonthName(month);
+  var host=clear($("kpiBody")),sc=kpiPartScore(own);
+  host.append(h("div",{"class":"kpi-top"},h("div",null,h("h4",{text:(u&&u.name)||email}),h("p",{"class":"sub",text:[u?roleName(u.role):"",discLabel(personDiscs(email))].filter(Boolean).join(" · ")})),
+    h("div",{"class":"kpi-big"},h("b",{text:sc===null?"—":Math.round(sc)+"%"}),h("span",{text:own?(own.done?"your evaluation · submitted":"your evaluation · draft"):"not filled yet"}))));
+  var card=h("section",{"class":"kpi-part mine"+(own&&own.done?" done":"")},
+    h("div",{"class":"kpi-ph"},h("h5",{text:"Your evaluation"}),h("span",{"class":"kpi-who",text:own?(own.done?"Submitted · ":"Draft · ")+niceStamp(own.at):"Not filled yet"})),
+    h("p",{"class":"hint",text:"Private: other leads and the engineer never see it. Only management, project managers and the admin do, as the average and one by one."}));
+  var list=h("div",{"class":"kpi-items"});
+  labels.forEach(function(l){var cur=d.scores[l]||0,row=h("div",{"class":"kpi-item"},h("span",{"class":"kpi-l",text:l}));
+    var g=h("div",{"class":"kpi-sc",role:"group","aria-label":l});
+    for(var i=1;i<=5;i++)(function(i){g.append(h("button",{type:"button","class":"kpi-b"+(cur===i?" on":""),title:i+" · "+KPI_SCALE[i],"aria-pressed":String(cur===i),onclick:function(){d.scores[l]=i;renderKpiForm();}},String(i)));})(i);
+    row.append(g,h("small",{"class":"kpi-sl",text:cur?KPI_SCALE[cur]:""}));list.append(row);});
+  card.append(list);
+  var ta=h("textarea",{"class":"kpi-note",maxlength:"1500",placeholder:"Notes (optional)"});ta.value=d.note;ta.addEventListener("input",function(){d.note=ta.value;});
+  card.append(ta,h("div",{"class":"kpi-acts"},own?h("button",{type:"button","class":"btn small danger left",onclick:function(ev){clearKpiPeer(email,ev.currentTarget);}},"Delete my evaluation"):null,
+    h("button",{type:"button","class":"btn small",onclick:function(ev){saveKpiPeer(email,labels,false,ev.currentTarget);}},"Save draft"),
+    h("button",{type:"button","class":"btn small primary",onclick:function(ev){saveKpiPeer(email,labels,true,ev.currentTarget);}},own&&own.done?"Save changes":"Submit")));
+  host.append(card);
+  $("kpiDelForm").hidden=true;$("kpiRelease").hidden=true;$("kpiRelNote").textContent="";
+}
+function saveKpiPeer(email,labels,done,btn){
+  var d=kpiDraft.peer||{scores:{},note:""},scores=labels.map(function(l){return {label:l,score:d.scores[l]||null};});
+  if(done&&scores.some(function(x){return !x.score;})){toast("Give every item a score before you submit.",true);return;}
+  btn.disabled=true;
+  run(sb.rpc("tt_kpi_peer_save",{p_email:email,p_month:kpiMonth(),p_scores:scores,p_note:d.note||"",p_done:done})).then(function(o){
+    var k={email:String(o.email),month:String(o.month),rater:String(o.rater),name:String(o.rater_name||o.rater),scores:Array.isArray(o.scores)?o.scores:[],note:String(o.note||""),done:!!o.done,at:String(o.at||"")},i;
+    for(i=0;i<kpiPeer.length;i++)if(kpiPeer[i].email===k.email&&kpiPeer[i].month===k.month&&kpiPeer[i].rater===k.rater){kpiPeer[i]=k;break;}if(i===kpiPeer.length)kpiPeer.push(k);
+    toast(done?"Evaluation submitted.":"Draft saved.");renderKpiForm();if(S.view==="kpi")renderKpi();})
+    .catch(function(e){var m=String(e&&e.message||"");toast(/tt_kpi_peer|schema cache|does not exist/i.test(m)?"Run the new database update (version 50) in Supabase first.":writeError(e).replace(/^Could not save:\s*/,""),true);btn.disabled=false;});
+}
+function clearKpiPeer(email,btn){
+  if(!confirm("Delete your evaluation of this engineer for "+kpiMonthName(kpiMonth())+"?"))return;btn.disabled=true;
+  run(sb.rpc("tt_kpi_peer_clear",{p_email:email,p_month:kpiMonth()})).then(function(){
+    kpiPeer=kpiPeer.filter(function(x){return !(x.email===email&&x.month===kpiMonth()&&x.rater===me.email);});delete kpiDraft.peer;
+    toast("Deleted.");renderKpiForm();if(S.view==="kpi")renderKpi();}).catch(function(e){toast(writeError(e).replace(/^Could not save:\s*/,""),true);btn.disabled=false;});
+}
+function peerBox(email,month){
+  var rows=kpiPeer.filter(function(x){return x.email===email&&x.month===month;}).sort(function(a,b){return a.name.localeCompare(b.name);});
+  var box=h("section",{"class":"kpi-part"},h("div",{"class":"kpi-ph"},h("h5",{text:"Evaluations by the leads"}),h("span",{"class":"kpi-who",text:rows.filter(function(x){return x.done;}).length+" submitted"})),
+    h("p",{"class":"hint",text:"Each lead of the discipline evaluates privately. The average is the Direct manager part. Only management, project managers and the admin see this list."}));
+  if(!rows.length){box.append(h("p",{"class":"hint",text:"No lead has evaluated this engineer yet."}));return box;}
+  rows.forEach(function(x){var sc=kpiPartScore(x);
+    box.append(h("div",{"class":"kpi-pr",title:x.note||""},h("span",{"class":"kpi-prl",text:x.name}),h("span",{"class":"kpi-track"+(x.done?"":" draft")},h("i",{style:"width:"+(sc===null?0:sc)+"%"})),
+      h("span",{"class":"kpi-prv",text:sc===null?"—":Math.round(sc)+"%"+(x.done?"":"*")})));
+    if(x.note)box.append(h("p",{"class":"kpi-noteview",text:x.name+": "+x.note}));});
+  return box;
+}
 function renderKpiForm(){
   var email=kpiOpenEmail,month=kpiMonth(),u=null;directory.forEach(function(x){if(x.email===email)u=x;});
+  if(kpiPeerCan(email)){renderPeerForm(u,email,month);return;}
   var r=null;kpiRows.forEach(function(x){if(x.email===email&&x.month===month)r=x;});
   var crit=kpiCrit(),w=kpiW(),f=kpiFinal(r),a=kpiAuto[email+"|"+month],released=!!(r&&r.released_at);
   $("kpiTitle").textContent="KPI · "+kpiMonthName(month);
@@ -5598,6 +5656,7 @@ function renderKpiForm(){
     else if(saved&&saved.note)card.append(h("p",{"class":"kpi-noteview",text:saved.note}));
     host.append(card);
   });
+  if(u&&u.role==="engineer"&&editAll())host.append(peerBox(email,month));
   var kdb=$("kpiDelForm");kdb.hidden=!r||!(isAdmin()||kpiCanRelease());kdb.onclick=function(){clearKpi(r,"all","",kdb);};
   var rb=$("kpiRelease");rb.hidden=!kpiCanRelease()||!r;
   if(r){rb.textContent=released?"Take it back from "+((u&&u.name)||r.name):"Send to "+((u&&u.name)||r.name);rb.disabled=!released&&!f.complete;rb.title=!released&&!f.complete?"All three parts have to be submitted first":"";}
@@ -5908,13 +5967,19 @@ function canAttend(){return !!me&&(canPunch()||can("att_view_team"));}
 function attManage(disc,email){return can("att_correct")&&(inScope(disc)||(!!email&&personDiscs(email).some(function(d){return myDiscs().indexOf(d)>=0;})));}
 function canDecide(q){if(!me||q.email===me.email)return false;if(isAdmin())return true;if(!can("approve_requests"))return false;if(can("view_all"))return true;
   return personDiscs(q.email).some(function(d){return myDiscs().indexOf(d)>=0;})&&rankOf(me.role)>rankOf(personRole(q.email));}
+/* Each lead of a discipline evaluates its engineers privately; the engineer's "direct manager" part is the average, so nobody types it */
+function peerRater(){return !!me&&isLeadRole(me.role)&&can("kpi_mgr")&&!editAll();}
+function kpiPeerCan(email){if(!peerRater()||email===me.email)return false;var u=null;directory.forEach(function(x){if(x.email===email)u=x;});
+  return !!u&&u.role==="engineer"&&personDiscs(email).some(function(d){return myDiscs().indexOf(d)>=0;});}
+function peerOf(email,rater){var r=null;kpiPeer.forEach(function(x){if(x.email===email&&x.month===kpiMonth()&&x.rater===rater)r=x;});return r;}
 function kpiCan(part,email){if(!me||email===me.email)return false;var u=null;directory.forEach(function(x){if(x.email===email)u=x;});if(!kpiTarget(u))return false;
+  if(part==="mgr"&&u.role==="engineer")return false;
   if(isAdmin())return true;if(part==="hr")return can("kpi_hr");if(part==="top")return can("kpi_top");
   if(!can("kpi_mgr"))return false;if(can("view_all"))return true;return personDiscs(email).some(function(d){return myDiscs().indexOf(d)>=0;})&&rankOf(me.role)>rankOf(u.role);}
 function kpiCanRelease(){return can("kpi_send");}
 function kpiEvaluator(){return !!me&&(can("view_all")||can("kpi_hr")||can("kpi_top")||can("kpi_mgr"));}
 function canMgmt(){return can("mgmt_dash");}
-function kpiPeople(){return directory.filter(function(u){if(!kpiTarget(u)||(me&&u.email===me.email))return false;if(can("view_all")||can("kpi_hr")||can("kpi_top"))return true;return kpiCan("mgr",u.email);})
+function kpiPeople(){return directory.filter(function(u){if(!kpiTarget(u)||(me&&u.email===me.email))return false;if(can("view_all")||can("kpi_hr")||can("kpi_top"))return true;return kpiCan("mgr",u.email)||kpiPeerCan(u.email);})
   .sort(function(a,b){return (a.discipline||"").localeCompare(b.discipline||"")||(a.name||a.email).localeCompare(b.name||b.email);});}
 
 /* the Permissions window */
