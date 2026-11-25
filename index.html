@@ -810,6 +810,7 @@ table.mg-cg td,table.mg-cg th{padding-top:7px;padding-bottom:7px}.mg-cg .mg-cg-w
 .mg-cwho{margin:0 0 4px;font-size:12px;font-weight:700;color:var(--accent)}
 .u-two{display:grid;gap:4px}.u-tk{display:grid;gap:2px}.u-tk small{color:var(--muted);font-size:11px}
 .tm-opt{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:rgba(214,158,46,.18);color:#8a5a00;align-self:center}.tm-opt.none{background:rgba(120,120,120,.18);color:var(--muted)}.tm-scope{margin-left:auto;font:inherit;font-size:12px;padding:3px 6px;border-radius:6px}
+.kpi-avgv{min-width:70px;text-align:right;font-size:15px}.kpi-brk{margin:6px 0 10px;overflow:auto;max-height:340px}.kpi-brk td,.kpi-brk th{font-size:12px;padding:4px 8px}
 .u-name{display:block;margin-top:4px;width:100%;max-width:260px;font:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--line,#d0d5dd);border-radius:6px;background:transparent;color:inherit}
 .fc-host{position:fixed;right:18px;bottom:18px;z-index:9000;display:flex;flex-direction:column-reverse;gap:10px;width:min(400px,calc(100vw - 24px));pointer-events:none}
 .fc{position:relative;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;padding:14px 14px 16px;border-radius:14px;background:var(--surface);color:var(--ink);
@@ -5642,6 +5643,13 @@ function peerBox(email,month,part){
   var box=h("section",{"class":"kpi-part"},h("div",{"class":"kpi-ph"},h("h5",{text:top?"Evaluations by top management / PM":"Evaluations by the leads"}),h("span",{"class":"kpi-who",text:nd+" submitted"}),h("b",{"class":"kpi-ps",text:av===null?"":"avg "+Math.round(av)+"%"})),
     h("p",{"class":"hint",text:top?"Each top management member or project manager can evaluate, more than once. The average of all submitted evaluations is the Top management / PM part. Only top management, PMs, HR and the admin see this list.":"Each lead of the discipline evaluates privately, and can evaluate more than once. The average of all submitted evaluations is the Direct manager part."}));
   if(!rows.length){box.append(h("p",{"class":"hint",text:top?"Nobody has evaluated yet.":"No lead has evaluated this person yet."}));return box;}
+  var dn=rows.filter(function(x){return x.done;}),labs=[];
+  dn.forEach(function(x){x.scores.forEach(function(q){if(q&&q.score&&labs.indexOf(q.label)<0)labs.push(q.label);});});
+  if(dn.length&&labs.length){var th=h("tr",null,h("th",{text:"Item"}));dn.forEach(function(x){th.append(h("th",{text:x.name.split(" ")[0]+" "+shortDate(x.at.slice(0,10)),title:x.name+" · "+niceStamp(x.at)}));});th.append(h("th",{text:"Avg"}));
+    var tb=h("tbody");labs.forEach(function(l){var tr=h("tr",null,h("td",{text:l.replace(/\t/g," ").slice(0,70)})),sum=0,n=0;
+      dn.forEach(function(x){var v=null;x.scores.forEach(function(q){if(q.label===l&&q.score)v=+q.score;});if(v!==null){sum+=v;n++;}tr.append(h("td",{text:v===null?"—":String(v)}));});
+      tr.append(h("td",null,h("b",{text:n?(Math.round(sum/n*10)/10)+"":"—"})));tb.append(tr);});
+    box.append(h("div",{"class":"tablewrap kpi-brk"},h("table",{"class":"plain"},h("thead",null,th),tb)));}
   rows.forEach(function(x){var sc=kpiPartScore(x);
     box.append(h("div",{"class":"kpi-pr",title:x.note||""},h("span",{"class":"kpi-prl",text:x.name+" · "+niceStamp(x.at)}),h("span",{"class":"kpi-track"+(x.done?"":" draft")},h("i",{style:"width:"+(sc===null?0:sc)+"%"})),
       h("span",{"class":"kpi-prv",text:sc===null?"—":Math.round(sc)+"%"+(x.done?"":"*")})));
@@ -5665,7 +5673,7 @@ function renderKpiForm0(){
     var d=kpiDraft[key]||(kpiDraft[key]={scores:{},note:saved?String(saved.note||""):""});
     if(saved&&Array.isArray(saved.scores)&&!d.init){saved.scores.forEach(function(x){if(x&&x.score)d.scores[x.label]=+x.score;});d.init=true;}
     var labels=can?crit[key]:(saved&&Array.isArray(saved.scores)&&saved.scores.length?saved.scores.map(function(x){return x.label;}):crit[key]);
-    var sc=kpiPartScore(saved),who=saved&&saved.by_name?(saved.done?"Submitted by ":"Draft by ")+saved.by_name+(saved.at?" · "+niceStamp(saved.at):""):"Not filled yet";
+    var sc=kpiPartScore(saved),who=saved&&saved.by_name?(saved.raters?"":(saved.done?"Submitted by ":"Draft by "))+saved.by_name+(saved.at?" · "+niceStamp(saved.at):""):"Not filled yet";
     var card=h("section",{"class":"kpi-part"+(saved&&saved.done?" done":"")+(can?" mine":"")},
       h("div",{"class":"kpi-ph"},h("h5",{text:P[1]}),h("span",{"class":"kpi-w",text:w[key]+"%"}),h("span",{"class":"kpi-who",text:who}),
         h("b",{"class":"kpi-ps",text:sc===null?"":Math.round(sc)+"%"})),
@@ -5673,6 +5681,8 @@ function renderKpiForm0(){
     if(key!=="top"||a)card.append(kpiAutoBox(key,a));
     var list=h("div",{"class":"kpi-items"});
     labels.forEach(function(l){var cur=d.scores[l]||0,row=h("div",{"class":"kpi-item"},h("span",{"class":"kpi-l",text:l}));
+      if(saved&&saved.raters&&!can){var sv=null;saved.scores.forEach(function(x){if(x.label===l)sv=x.score;});
+        row.append(h("b",{"class":"kpi-avgv",text:sv===null?"—":(Math.round(sv*10)/10)+" / 5"}),h("small",{"class":"kpi-sl",text:"average of "+saved.raters+(saved.raters===1?" evaluation":" evaluations")}));list.append(row);return;}
       var g=h("div",{"class":"kpi-sc",role:"group","aria-label":l});
       for(var i=1;i<=5;i++)(function(i){g.append(h("button",{type:"button","class":"kpi-b"+(cur===i?" on":""),title:i+" · "+KPI_SCALE[i],"aria-pressed":String(cur===i),disabled:!can,
         onclick:function(){d.scores[l]=i;renderKpiForm();}},String(i)));})(i);
